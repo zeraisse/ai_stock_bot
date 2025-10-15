@@ -1,15 +1,3 @@
-"""
-Architecture micro-services simple:
-- TradingEnv: Orchestrateur principal (marché + règles)
-- Portfolio: Gestion du portefeuille
-- RewardCalculator: Calcul des récompenses
-- ObservationBuilder: Construction des observations
-
-Extensible pour:
-- CoDeepNEAT + PPO (actions continues possibles)
-- TFT + LNN (ajout facile de prédictions externes)
-"""
-
 import numpy as np
 import pandas as pd
 from gym import Env
@@ -17,7 +5,10 @@ from gym.spaces import Discrete, Box
 from typing import Dict, Tuple, Optional, List
 from dataclasses import dataclass, field
 import os
-
+import yfinance as yf  # Ajout pour WebSocket
+import queue  # Ajout pour gérer les mises à jour live
+import threading  # Ajout pour lancer le WebSocket en background
+import time  # Ajout pour fallback de polling
 
 # 1. CONFIGURATION
 @dataclass
@@ -40,15 +31,20 @@ class TradingConfig:
     lookback_window: int = 60  # Fenêtre de prix passés
     include_technical_indicators: bool = True
     
+    # Ajout pour mode live
+    max_steps_live: int = 1000  # Limite d'étapes en mode live (pour éviter boucle infinie)
+    live_initial_timeout_seconds: int = 30  # Timeout initial pour premier tick
+    live_step_timeout_seconds: int = 65  # Timeout d'attente de tick par step (aligné 1m)
+    ws_silence_seconds_to_fallback: int = 45  # Silence WS avant fallback polling
+    polling_interval_seconds: int = 2  # Intervalle polling yfinance
+
     def __post_init__(self):
         """Validation de la configuration."""
         assert self.initial_balance > 0, "Balance initiale doit être > 0"
         assert 0 <= self.transaction_fee < 0.1, "Frais doivent être entre 0 et 10%"
         assert self.reward_type in ["profit", "sharpe", "sortino"], "Type de récompense invalide"
 
-
 # 2. PORTFOLIO - Gestion du Portefeuille
-
 class Portfolio:
     """
     Micro-service: Gestion du portefeuille.
@@ -166,9 +162,7 @@ class Portfolio:
             "unrealized_pnl": (current_price - self.cost_basis) * self.shares_held if self.shares_held > 0 else 0
         }
 
-
 # 3. REWARD CALCULATOR - Calcul des Récompenses
-
 class RewardCalculator:
     """
     Micro-service: Calcul des récompenses.
@@ -259,9 +253,7 @@ class RewardCalculator:
         sortino = np.mean(excess_returns) / np.std(downside_returns)
         return sortino
 
-
 # 4. OBSERVATION BUILDER - Construction des Observations
-
 class ObservationBuilder:
     """
     Micro-service: Construction des observations.
@@ -350,7 +342,6 @@ class ObservationBuilder:
         seraient précalculés sur toute la série.
         """
         # Pour l'instant, retourner des valeurs placeholder
-        # Ces valeurs devraient être calculées en amont sur toute la série
         return [
             0.5,  # RSI normalisé (0-1)
             0.0,  # MACD
@@ -359,9 +350,7 @@ class ObservationBuilder:
             0.0   # Volume change
         ]
 
-
 # 5. TRADING ENVIRONMENT - Environnement Principal
-
 class TradingEnv(Env):
     """
     Environnement de Trading Gym.
@@ -372,7 +361,7 @@ class TradingEnv(Env):
     - ObservationBuilder: construction des observations
     
     L'environnement représente:
-    - Le marché (données historiques)
+    - Le marché (données historiques ou live via WebSocket)
     - Votre portefeuille (cash + positions)
     - Les règles de trading (frais, contraintes)
     """
@@ -380,24 +369,49 @@ class TradingEnv(Env):
     metadata = {'render.modes': ['human']}
     
     def __init__(self, 
-                 data: pd.DataFrame,
+                 data: Optional[pd.DataFrame] = None,  # Optionnel si live=True
                  config: Optional[TradingConfig] = None,
-                 external_predictions: Optional[np.ndarray] = None):
+                 external_predictions: Optional[np.ndarray] = None,
+                 live: bool = False,  # Mode live
+                 symbol: Optional[str] = None):  # Symbole pour live
         """
         Initialiser l'environnement de trading.
         
         Args:
-            data: DataFrame avec colonnes ['open', 'high', 'low', 'close', 'volume']
+            data: DataFrame avec colonnes ['open', 'high', 'low', 'close', 'volume'] (requis si live=False)
             config: Configuration de l'environnement
             external_predictions: Prédictions LSTM/TFT/LNN (optionnel)
+            live: Si True, utilise WebSocket Yahoo Finance au lieu de data historique
+            symbol: Symbole (ex: "AAPL" ou "BTC-USD") requis en mode live
         """
         super(TradingEnv, self).__init__()
         
         # Configuration
         self.config = config or TradingConfig()
         
-        # Données de marché
-        self.data = data.reset_index(drop=True)
+        # Mode live
+        self.live = live
+        self.symbol = symbol.upper() if symbol else None
+        
+        if self.live:
+            if self.symbol is None:
+                raise ValueError("Symbole requis en mode live (ex: 'AAPL' ou 'BTC-USD')")
+            # Initialiser données live vides
+            self.current_data = pd.Series({
+                'open': 0.0,
+                'high': 0.0,
+                'low': 0.0,
+                'close': 0.0,
+                'volume': 0.0
+            }, dtype=float)
+            self.data_queue = queue.Queue()  # Pour recevoir mises à jour WebSocket
+            self.ws = None
+            self.ws_thread = None
+        else:
+            if data is None:
+                raise ValueError("DataFrame 'data' requis en mode historique")
+            self.data = data.reset_index(drop=True)
+        
         self.external_predictions = external_predictions
         
         # Micro-services
@@ -410,7 +424,7 @@ class TradingEnv(Env):
             risk_free_rate=self.config.risk_free_rate
         )
         self.observation_builder = ObservationBuilder(
-            data_columns=list(self.data.columns),
+            data_columns=['open', 'high', 'low', 'close', 'volume'],  # Fixé pour compatibilité live
             lookback_window=self.config.lookback_window,
             include_technical_indicators=self.config.include_technical_indicators
         )
@@ -421,10 +435,8 @@ class TradingEnv(Env):
         self.previous_net_worth = self.config.initial_balance
         
         # Espaces Gym
-        # Action: # 0=Hold, 1=Buy, 2=Sell, 3=Short
-        self.action_space = Discrete(4)
+        self.action_space = Discrete(4)  # 0=Hold, 1=Buy, 2=Sell, 3=Short
         
-        # Observation: vecteur de features
         obs_size = self.observation_builder.observation_size
         if external_predictions is not None:
             obs_size += external_predictions.shape[1]
@@ -447,9 +459,78 @@ class TradingEnv(Env):
         self.done = False
         self.previous_net_worth = self.config.initial_balance
         
-        # Réinitialiser les micro-services
         self.portfolio.reset()
         self.reward_calculator.reset()
+        
+        if self.live:
+            self._last_ws_tick_ts = time.time()
+
+            def message_handler(message):
+                # Handler générique pour messages Yahoo non officiels
+                try:
+                    if isinstance(message, dict):
+                        # Essaye différents formats de clé
+                        if self.symbol in message:
+                            msg = message[self.symbol]
+                        else:
+                            msg = message
+                        close_val = float(msg.get('price', msg.get('close', self.current_data['close'])))
+                        high_val = float(msg.get('day_high', msg.get('dayHigh', self.current_data['high'])))
+                        low_val = float(msg.get('day_low', msg.get('dayLow', self.current_data['low'])))
+                        open_val = float(msg.get('open_price', msg.get('open', self.current_data['open'])))
+                        # volume peut être grand; caster en float pour la Series float
+                        vol_raw = msg.get('day_volume', msg.get('dayVolume', self.current_data['volume']))
+                        vol_val = float(vol_raw) if vol_raw is not None else float(self.current_data['volume'])
+                        self.current_data['close'] = close_val
+                        self.current_data['high'] = high_val
+                        self.current_data['low'] = low_val
+                        self.current_data['open'] = open_val
+                        self.current_data['volume'] = vol_val
+                        self._last_ws_tick_ts = time.time()
+                        self.data_queue.put(self.current_data.copy())
+                except Exception:
+                    # Ignorer les messages malformés
+                    pass
+
+            # Tente WebSocket yfinance (non officiel) puis fallback polling si pas de tick
+            try:
+                self.ws = yf.WebSocket()
+                self.ws.subscribe([self.symbol])
+                self.ws_thread = threading.Thread(target=self.ws.listen, args=(message_handler,))
+                self.ws_thread.daemon = True
+                self.ws_thread.start()
+            except Exception:
+                # Si création WS échoue, démarrer directement le polling
+                self._start_polling_fallback()
+
+            # Thread de surveillance du silence WS -> fallback polling
+            def _ws_silence_monitor():
+                while True:
+                    try:
+                        time.sleep(1)
+                        if time.time() - getattr(self, '_last_ws_tick_ts', 0) > self.config.ws_silence_seconds_to_fallback:
+                            self._start_polling_fallback()
+                            break
+                    except Exception:
+                        break
+
+            mon = threading.Thread(target=_ws_silence_monitor)
+            mon.daemon = True
+            mon.start()
+
+            print(f"Attente de la première mise à jour live pour {self.symbol}...")
+            try:
+                self.current_data = self.data_queue.get(timeout=self.config.live_initial_timeout_seconds)
+                print(f"✅ Source live active. Prix initial: {self.current_data['close']:.2f}")
+            except queue.Empty:
+                print("⏰ Aucun tick reçu en 30s via WebSocket. Activation du fallback polling yfinance (1m)...")
+                self._start_polling_fallback()
+                try:
+                    self.current_data = self.data_queue.get(timeout=self.config.live_initial_timeout_seconds)
+                    print(f"✅ Fallback polling actif. Prix initial: {self.current_data['close']:.2f}")
+                except queue.Empty:
+                    print("❌ Échec du fallback polling.")
+                    raise TimeoutError("Pas de données live - réseau ou source indisponible.")
         
         return self._get_observation()
     
@@ -466,34 +547,33 @@ class TradingEnv(Env):
             done: Episode terminé ?
             info: Informations additionnelles
         """
-        # Obtenir le prix actuel
-        current_price = self.data.iloc[self.current_step]["close"]
+        if self.live:
+            try:
+                self.current_data = self.data_queue.get(timeout=self.config.live_step_timeout_seconds)
+                current_price = self.current_data["close"]
+            except queue.Empty:
+                print(f"⏰ Pas de tick reçu en {self.config.live_step_timeout_seconds}s. Utilisation de la dernière valeur.")
+                current_price = self.current_data["close"]
+        else:
+            current_price = self.data.iloc[self.current_step]["close"]
         
-        # Exécuter l'action via le Portfolio
         trade_result = self._execute_action(action, current_price)
-        
-        # Calculer la nouvelle valeur nette
         current_net_worth = self.portfolio.get_net_worth(current_price)
-        
-        # Calculer la récompense
         reward = self.reward_calculator.calculate_reward(
             previous_net_worth=self.previous_net_worth,
             current_net_worth=current_net_worth,
             action=action
         )
         
-        # Mettre à jour l'état
         self.previous_net_worth = current_net_worth
         self.current_step += 1
         
-        # Vérifier si terminé
-        if self.current_step >= len(self.data) - 1:
-            self.done = True
+        if self.live:
+            self.done = self.current_step >= self.config.max_steps_live
+        else:
+            self.done = self.current_step >= len(self.data) - 1
         
-        # Construire l'observation
         observation = self._get_observation()
-        
-        # Informations additionnelles
         info = {
             "net_worth": current_net_worth,
             "cash": self.portfolio.cash,
@@ -517,16 +597,15 @@ class TradingEnv(Env):
     
     def _get_observation(self) -> np.ndarray:
         """Construire l'observation via ObservationBuilder."""
-        portfolio_state = self.portfolio.get_state(
-            self.data.iloc[self.current_step]["close"]
-        )
+        if self.live:
+            current_data = self.current_data
+            current_price = current_data["close"]
+        else:
+            current_data = self.data.iloc[self.current_step]
+            current_price = current_data["close"]
         
-        current_data = self.data.iloc[self.current_step]
-        
-        # Récupérer les prédictions externes si disponibles
-        ext_pred = None
-        if self.external_predictions is not None:
-            ext_pred = self.external_predictions[self.current_step]
+        portfolio_state = self.portfolio.get_state(current_price)
+        ext_pred = self.external_predictions[self.current_step] if self.external_predictions is not None else None
         
         return self.observation_builder.build_observation(
             portfolio_state=portfolio_state,
@@ -534,14 +613,52 @@ class TradingEnv(Env):
             initial_balance=self.config.initial_balance,
             external_predictions=ext_pred
         )
+
+    def _start_polling_fallback(self) -> None:
+        """Démarrer un thread de polling yfinance (interval 1m) comme fallback live.
+        Pousse périodiquement la dernière bougie dans la data_queue.
+        """
+        def _poll_loop(symbol: str, q: queue.Queue):
+            # Première poussée immédiate pour éviter timeout
+            while True:
+                try:
+                    # Récupère la dernière ligne 1m (ou 5m si 1m indisponible)
+                    for interval in ("1m", "5m"):
+                        hist = yf.Ticker(symbol).history(period="1d", interval=interval)
+                        if hist is not None and len(hist) > 0:
+                            last = hist.iloc[-1]
+                            break
+                    else:
+                        raise ValueError("Pas de données retournées par yfinance")
+
+                    self.current_data['open'] = float(last.get('Open', last.get('open', self.current_data['open'])))
+                    self.current_data['high'] = float(last.get('High', last.get('high', self.current_data['high'])))
+                    self.current_data['low'] = float(last.get('Low', last.get('low', self.current_data['low'])))
+                    self.current_data['close'] = float(last.get('Close', last.get('close', self.current_data['close'])))
+                    self.current_data['volume'] = float(last.get('Volume', last.get('volume', self.current_data['volume'])))
+                    q.put(self.current_data.copy())
+                except Exception:
+                    # En cas d'erreur réseau/parse, on réessaie
+                    pass
+                time.sleep(self.config.polling_interval_seconds)
+
+        t = threading.Thread(target=_poll_loop, args=(self.symbol, self.data_queue))
+        t.daemon = True
+        t.start()
     
     def render(self, mode='human'):
         """Afficher l'état actuel de l'environnement."""
-        current_price = self.data.iloc[self.current_step]["close"]
+        if self.live:
+            current_price = self.current_data["close"]
+            step_max = self.config.max_steps_live
+        else:
+            current_price = self.data.iloc[self.current_step]["close"]
+            step_max = len(self.data) - 1
+        
         portfolio_state = self.portfolio.get_state(current_price)
         
         print(f"\n{'='*60}")
-        print(f"Step: {self.current_step}/{len(self.data)-1}")
+        print(f"Step: {self.current_step}/{step_max} (Mode: {'Live' if self.live else 'Historique'})")
         print(f"{'='*60}")
         print(f"Prix actuel:        ${current_price:.2f}")
         print(f"Cash:               ${portfolio_state['cash']:.2f}")
@@ -556,9 +673,7 @@ class TradingEnv(Env):
         """Obtenir l'historique des trades."""
         return self.portfolio.trades_history
 
-
 # 6. FONCTIONS UTILITAIRES POUR CHARGER LES DONNÉES
-
 def load_stock_data_from_csv(csv_path: str, symbol: Optional[str] = None) -> pd.DataFrame:
     """
     Charger les données boursières depuis un fichier CSV.
@@ -576,34 +691,26 @@ def load_stock_data_from_csv(csv_path: str, symbol: Optional[str] = None) -> pd.
         ...
     """
     try:
-        # Charger le CSV
         print(f"Chargement des données depuis: {csv_path}")
         data = pd.read_csv(csv_path)
         
-        # Vérifier les colonnes requises
         required_columns = ['Symbol', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume']
         missing_columns = [col for col in required_columns if col not in data.columns]
         
         if missing_columns:
             raise ValueError(f"Colonnes manquantes dans le CSV: {missing_columns}")
         
-        # Filtrer par symbole si spécifié
         if symbol:
             symbol = symbol.upper()
             if symbol not in data['Symbol'].values:
                 available_symbols = sorted(data['Symbol'].unique())
-                raise ValueError(f"Symbole '{symbol}' non trouvé. Symboles disponibles: {available_symbols}")
-            
+                print(f"⚠️ Symbole '{symbol}' non trouvé dans le CSV. Symboles disponibles: {', '.join(available_symbols)}")
             data = data[data['Symbol'] == symbol].copy()
             print(f"Filtrage sur le symbole: {symbol}")
         
-        # Convertir la date
         data['Date'] = pd.to_datetime(data['Date'])
-        
-        # Trier par date
         data = data.sort_values('Date').reset_index(drop=True)
         
-        # Renommer les colonnes pour correspondre au format attendu
         data = data.rename(columns={
             'Open': 'open',
             'High': 'high', 
@@ -612,10 +719,8 @@ def load_stock_data_from_csv(csv_path: str, symbol: Optional[str] = None) -> pd.
             'Volume': 'volume'
         })
         
-        # Sélectionner seulement les colonnes nécessaires
         result_data = data[['open', 'high', 'low', 'close', 'volume']].copy()
         
-        # Informations sur les données chargées
         if symbol:
             print(f"Données chargées pour {symbol}:")
         else:
@@ -634,7 +739,6 @@ def load_stock_data_from_csv(csv_path: str, symbol: Optional[str] = None) -> pd.
         raise FileNotFoundError(f"Fichier CSV non trouvé: {csv_path}")
     except Exception as e:
         raise Exception(f"Erreur lors du chargement du CSV: {str(e)}")
-
 
 def get_available_symbols(csv_path: str) -> List[str]:
     """
@@ -656,13 +760,10 @@ def get_available_symbols(csv_path: str) -> List[str]:
     except Exception as e:
         raise Exception(f"Erreur lors de la lecture des symboles: {str(e)}")
 
-
 # 7. EXEMPLE D'UTILISATION
-
 if __name__ == "__main__":
     csv_path = "../datatset/top10_stocks_2025_clean_international.csv"
     
-    # Vérifier que le fichier existe
     if not os.path.exists(csv_path):
         print(f"Fichier CSV non trouvé: {csv_path}")
         print("Assurez-vous que le chemin est correct et que le fichier existe.")
@@ -670,7 +771,6 @@ if __name__ == "__main__":
     
     print("Démarrage de l'environnement de trading avec données CSV\n")
     
-    # Afficher les symboles disponibles
     try:
         available_symbols = get_available_symbols(csv_path)
         print(f"Symboles disponibles ({len(available_symbols)}): {', '.join(available_symbols)}\n")
@@ -678,9 +778,8 @@ if __name__ == "__main__":
         print(f"Erreur lors de la lecture des symboles: {e}")
         exit(1)
     
-    # Charger les données pour un symbole spécifique (AAPL par exemple)
     try:
-        symbol = "AAPL"  # Vous pouvez changer ce symbole
+        symbol = "AAPL"
         print(f"Chargement des données pour {symbol}...")
         data = load_stock_data_from_csv(csv_path, symbol=symbol)
         print(f"Données chargées avec succès!\n")
@@ -689,99 +788,57 @@ if __name__ == "__main__":
         print(f"Erreur lors du chargement des données: {e}")
         exit(1)
     
-    # Configuration personnalisée
     config = TradingConfig(
         initial_balance=10_000,
         transaction_fee=0.001,
         reward_type="profit",
         include_technical_indicators=True,
-        lookback_window=60
+        lookback_window=60,
+        max_steps_live=100
     )
     
-    # Créer l'environnement
-    print("🔧 Création de l'environnement de trading...")
-    env = TradingEnv(data=data, config=config)
+    print(" Création de l'environnement historique...")
+    env_hist = TradingEnv(data=data, config=config)
     print(f"✅ Environnement créé avec succès!\n")
     
-    # Informations sur l'environnement
-    print("📊 INFORMATIONS SUR L'ENVIRONNEMENT")
-    print("=" * 50)
-    print(f"Symbole:                {symbol}")
-    print(f"Balance initiale:       ${config.initial_balance:,}")
-    print(f"Frais de transaction:   {config.transaction_fee*100:.1f}%")
-    print(f"Type de récompense:     {config.reward_type}")
-    print(f"Taille observation:     {env.observation_space.shape[0]}")
-    print(f"Actions possibles:      {env.action_space.n} (Hold, Buy, Sell, Short)")
-    print(f"Données disponibles:    {len(data)} jours")
-    print(f"Période:                {data.index[0]} à {data.index[-1]}")
-    print("=" * 50)
-    print()
+    # Test historique (simplifié)
+    obs = env_hist.reset()
+    print(f"Test historique démarré. Observation initiale: {obs.shape}")
     
-    # Test de l'environnement avec des actions aléatoires
-    print("🎮 TEST AVEC ACTIONS ALÉATOIRES")
+    print("\n TEST EN MODE LIVE AVEC WEBSOCKET (AAPL)")
     print("=" * 50)
     
-    obs = env.reset()
-    print(f"Environnement réinitialisé")
-    print(f"Shape de l'observation: {obs.shape}")
-    print(f"Espace d'actions: {env.action_space}")
-    print(f"Espace d'observations: {env.observation_space}")
-    print()
+    env_live = TradingEnv(config=config, live=True, symbol="AAPL")
     
-    # Simuler quelques étapes
-    action_names = ['HOLD', 'BUY', 'SELL', 'SHORT']
+    obs = env_live.reset()
+    
     total_reward = 0
+    action_names = ['HOLD', 'BUY', 'SELL', 'SHORT']
     
-    print("Simulation de 20 étapes...")
+    print("Simulation de quelques étapes live (attente de mises à jour prix)...")
     print("-" * 80)
     print(f"{'Step':<6} {'Action':<6} {'Prix':<8} {'Reward':<12} {'Net Worth':<12} {'Cash':<10} {'Shares':<8}")
     print("-" * 80)
     
     for step in range(20):
-        action = env.action_space.sample()  # Action aléatoire
-        obs, reward, done, info = env.step(action)
+        action = env_live.action_space.sample()
+        obs, reward, done, info = env_live.step(action)
         total_reward += reward
         
-        current_price = data.iloc[env.current_step-1]["close"]
+        current_price = env_live.current_data["close"]
         
         print(f"{step+1:<6} {action_names[action]:<6} ${current_price:<7.2f} "
               f"{reward:<11.6f} ${info['net_worth']:<11.2f} "
               f"${info['cash']:<9.2f} {info['shares']:<7.2f}")
         
         if done:
-            print(f"\nEpisode terminé à l'étape {step+1}")
+            print(f"\nEpisode live terminé à l'étape {step+1}")
             break
     
     print("-" * 80)
     print(f"Récompense totale: {total_reward:.6f}")
-    print(f"Performance finale:")
     
-    # Afficher l'état final
-    env.render()
+    env_live.render()
     
-    # Historique des trades
-    trades = env.get_portfolio_history()
-    print(f"Nombre de transactions: {len(trades)}")
-    
-    if trades:
-        print("\n DERNIÈRES TRANSACTIONS:")
-        print("-" * 60)
-        for i, trade in enumerate(trades[-5:], 1):  # 5 dernières transactions
-            if trade['success']:
-                action_type = trade['type']
-                if action_type in ['BUY', 'SELL']:
-                    shares = trade.get('shares', 0)
-                    price = trade.get('price', 0)
-                    print(f"  {i}. {action_type}: {shares:.2f} actions @ ${price:.2f}")
-        print("-" * 60)
-    
-    print(f"\nTest terminé avec succès!")
-    print(f"💡 L'environnement est prêt pour l'entraînement d'agents RL!")
-    
-    print(f"\n\nEXEMPLE AVEC TOUS LES SYMBOLES")
-    print("=" * 50)
-    print("Pour charger toutes les données (tous symboles):")
-    print("   data = load_stock_data_from_csv(csv_path)  # Sans paramètre symbol")
-    print("Attention: cela chargera toutes les données de tous les symboles")
-    print("   et l'environnement utilisera une séquence continue de tous les prix.")
-    print("=" * 50)
+    print(f"\nTest live terminé!")
+    print(f"💡 En mode live, les étapes avancent sur chaque mise à jour prix (24/7 pour BTC-USD). Ajustez max_steps_live pour plus long.")
