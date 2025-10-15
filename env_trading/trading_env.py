@@ -841,4 +841,4 @@ if __name__ == "__main__":
     env_live.render()
     
     print(f"\nTest live terminé!")
-    print(f"💡 En mode live, les étapes avancent sur chaque mise à jour prix (24/7 pour BTC-USD). Ajustez max_steps_live pour plus long.")
+    print(f"💡 En mode live, les étapes avancent sur chaque mise à jour prix. Ajustez max_steps_live pour plus long.")
