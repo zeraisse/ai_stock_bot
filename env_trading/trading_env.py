@@ -701,7 +701,7 @@ if __name__ == "__main__":
     # Créer l'environnement
     print("🔧 Création de l'environnement de trading...")
     env = TradingEnv(data=data, config=config)
-    print(f"✅ Environnement créé avec succès!\n")
+    print(f"Environnement créé avec succès!\n")
     
     # Informations sur l'environnement
     print("📊 INFORMATIONS SUR L'ENVIRONNEMENT")
@@ -718,7 +718,7 @@ if __name__ == "__main__":
     print()
     
     # Test de l'environnement avec des actions aléatoires
-    print("🎮 TEST AVEC ACTIONS ALÉATOIRES")
+    print("TEST AVEC ACTIONS ALÉATOIRES")
     print("=" * 50)
     
     obs = env.reset()
