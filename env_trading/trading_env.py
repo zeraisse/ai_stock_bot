@@ -577,7 +577,7 @@ def load_stock_data_from_csv(csv_path: str, symbol: Optional[str] = None) -> pd.
     """
     try:
         # Charger le CSV
-        print(f"📁 Chargement des données depuis: {csv_path}")
+        print(f"Chargement des données depuis: {csv_path}")
         data = pd.read_csv(csv_path)
         
         # Vérifier les colonnes requises
@@ -595,7 +595,7 @@ def load_stock_data_from_csv(csv_path: str, symbol: Optional[str] = None) -> pd.
                 raise ValueError(f"Symbole '{symbol}' non trouvé. Symboles disponibles: {available_symbols}")
             
             data = data[data['Symbol'] == symbol].copy()
-            print(f"🎯 Filtrage sur le symbole: {symbol}")
+            print(f"Filtrage sur le symbole: {symbol}")
         
         # Convertir la date
         data['Date'] = pd.to_datetime(data['Date'])
@@ -617,16 +617,16 @@ def load_stock_data_from_csv(csv_path: str, symbol: Optional[str] = None) -> pd.
         
         # Informations sur les données chargées
         if symbol:
-            print(f"✅ Données chargées pour {symbol}:")
+            print(f"Données chargées pour {symbol}:")
         else:
             symbols = sorted(data['Symbol'].unique()) if 'Symbol' in data.columns else ['Multiple']
-            print(f"✅ Données chargées pour {len(symbols)} symbole(s): {', '.join(symbols[:5])}")
+            print(f"Données chargées pour {len(symbols)} symbole(s): {', '.join(symbols[:5])}")
             if len(symbols) > 5:
                 print(f"    ... et {len(symbols)-5} autres symboles")
         
-        print(f"📊 Période: du {data['Date'].min().strftime('%Y-%m-%d')} au {data['Date'].max().strftime('%Y-%m-%d')}")
-        print(f"📈 Nombre de lignes: {len(result_data):,}")
-        print(f"💰 Prix moyen: ${result_data['close'].mean():.2f}")
+        print(f"Période: du {data['Date'].min().strftime('%Y-%m-%d')} au {data['Date'].max().strftime('%Y-%m-%d')}")
+        print(f"Nombre de lignes: {len(result_data):,}")
+        print(f"Prix moyen: ${result_data['close'].mean():.2f}")
         
         return result_data
         
@@ -673,20 +673,20 @@ if __name__ == "__main__":
     # Afficher les symboles disponibles
     try:
         available_symbols = get_available_symbols(csv_path)
-        print(f"📋 Symboles disponibles ({len(available_symbols)}): {', '.join(available_symbols)}\n")
+        print(f"Symboles disponibles ({len(available_symbols)}): {', '.join(available_symbols)}\n")
     except Exception as e:
-        print(f"❌ Erreur lors de la lecture des symboles: {e}")
+        print(f"Erreur lors de la lecture des symboles: {e}")
         exit(1)
     
     # Charger les données pour un symbole spécifique (AAPL par exemple)
     try:
         symbol = "AAPL"  # Vous pouvez changer ce symbole
-        print(f"🎯 Chargement des données pour {symbol}...")
+        print(f"Chargement des données pour {symbol}...")
         data = load_stock_data_from_csv(csv_path, symbol=symbol)
-        print(f"✅ Données chargées avec succès!\n")
+        print(f"Données chargées avec succès!\n")
         
     except Exception as e:
-        print(f"❌ Erreur lors du chargement des données: {e}")
+        print(f"Erreur lors du chargement des données: {e}")
         exit(1)
     
     # Configuration personnalisée
@@ -706,14 +706,14 @@ if __name__ == "__main__":
     # Informations sur l'environnement
     print("📊 INFORMATIONS SUR L'ENVIRONNEMENT")
     print("=" * 50)
-    print(f"🎯 Symbole:                {symbol}")
-    print(f"💰 Balance initiale:       ${config.initial_balance:,}")
-    print(f"💸 Frais de transaction:   {config.transaction_fee*100:.1f}%")
-    print(f"🎁 Type de récompense:     {config.reward_type}")
-    print(f"📏 Taille observation:     {env.observation_space.shape[0]}")
-    print(f"🎮 Actions possibles:      {env.action_space.n} (Hold, Buy, Sell, Short)")
-    print(f"📈 Données disponibles:    {len(data)} jours")
-    print(f"📅 Période:                {data.index[0]} à {data.index[-1]}")
+    print(f"Symbole:                {symbol}")
+    print(f"Balance initiale:       ${config.initial_balance:,}")
+    print(f"Frais de transaction:   {config.transaction_fee*100:.1f}%")
+    print(f"Type de récompense:     {config.reward_type}")
+    print(f"Taille observation:     {env.observation_space.shape[0]}")
+    print(f"Actions possibles:      {env.action_space.n} (Hold, Buy, Sell, Short)")
+    print(f"Données disponibles:    {len(data)} jours")
+    print(f"Période:                {data.index[0]} à {data.index[-1]}")
     print("=" * 50)
     print()
     
@@ -722,17 +722,17 @@ if __name__ == "__main__":
     print("=" * 50)
     
     obs = env.reset()
-    print(f"✅ Environnement réinitialisé")
-    print(f"🔍 Shape de l'observation: {obs.shape}")
-    print(f"🎯 Espace d'actions: {env.action_space}")
-    print(f"🌐 Espace d'observations: {env.observation_space}")
+    print(f"Environnement réinitialisé")
+    print(f"Shape de l'observation: {obs.shape}")
+    print(f"Espace d'actions: {env.action_space}")
+    print(f"Espace d'observations: {env.observation_space}")
     print()
     
     # Simuler quelques étapes
     action_names = ['HOLD', 'BUY', 'SELL', 'SHORT']
     total_reward = 0
     
-    print("🚀 Simulation de 20 étapes...")
+    print("Simulation de 20 étapes...")
     print("-" * 80)
     print(f"{'Step':<6} {'Action':<6} {'Prix':<8} {'Reward':<12} {'Net Worth':<12} {'Cash':<10} {'Shares':<8}")
     print("-" * 80)
@@ -749,22 +749,22 @@ if __name__ == "__main__":
               f"${info['cash']:<9.2f} {info['shares']:<7.2f}")
         
         if done:
-            print(f"\n🏁 Episode terminé à l'étape {step+1}")
+            print(f"\nEpisode terminé à l'étape {step+1}")
             break
     
     print("-" * 80)
-    print(f"💰 Récompense totale: {total_reward:.6f}")
-    print(f"📊 Performance finale:")
+    print(f"Récompense totale: {total_reward:.6f}")
+    print(f"Performance finale:")
     
     # Afficher l'état final
     env.render()
     
     # Historique des trades
     trades = env.get_portfolio_history()
-    print(f"📈 Nombre de transactions: {len(trades)}")
+    print(f"Nombre de transactions: {len(trades)}")
     
     if trades:
-        print("\n🔄 DERNIÈRES TRANSACTIONS:")
+        print("\n DERNIÈRES TRANSACTIONS:")
         print("-" * 60)
         for i, trade in enumerate(trades[-5:], 1):  # 5 dernières transactions
             if trade['success']:
@@ -775,13 +775,13 @@ if __name__ == "__main__":
                     print(f"  {i}. {action_type}: {shares:.2f} actions @ ${price:.2f}")
         print("-" * 60)
     
-    print(f"\n✅ Test terminé avec succès!")
+    print(f"\nTest terminé avec succès!")
     print(f"💡 L'environnement est prêt pour l'entraînement d'agents RL!")
     
     print(f"\n\nEXEMPLE AVEC TOUS LES SYMBOLES")
     print("=" * 50)
-    print("💡 Pour charger toutes les données (tous symboles):")
+    print("Pour charger toutes les données (tous symboles):")
     print("   data = load_stock_data_from_csv(csv_path)  # Sans paramètre symbol")
-    print("⚠️  Attention: cela chargera toutes les données de tous les symboles")
+    print("Attention: cela chargera toutes les données de tous les symboles")
     print("   et l'environnement utilisera une séquence continue de tous les prix.")
     print("=" * 50)
