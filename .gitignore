@@ -1,1 +1,42 @@
+# Environnement virtuel
 venv/
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Modèles et checkpoints
+*.pth
+*.pkl
+*.pickle
+
+# Fichiers compilés Python
+*.pyc
+*.pyo
+*.pyd
+trading_env.cpython-311.pyc
+
+# Logs et données temporaires
+*.log
+*.tmp
+*.temp
+
+# Dossiers de modèles
+models/
+DQN/models/
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Données sensibles
+*.env
+.env
