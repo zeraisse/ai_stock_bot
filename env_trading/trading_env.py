@@ -16,7 +16,7 @@ from gym import Env
 from gym.spaces import Discrete, Box
 from typing import Dict, Tuple, Optional, List
 from dataclasses import dataclass, field
-import yfinance as yf
+import os
 
 
 # 1. CONFIGURATION
@@ -557,43 +557,231 @@ class TradingEnv(Env):
         return self.portfolio.trades_history
 
 
-# 6. EXEMPLE D'UTILISATION
+# 6. FONCTIONS UTILITAIRES POUR CHARGER LES DONNÉES
+
+def load_stock_data_from_csv(csv_path: str, symbol: Optional[str] = None) -> pd.DataFrame:
+    """
+    Charger les données boursières depuis un fichier CSV.
+    
+    Args:
+        csv_path: Chemin vers le fichier CSV
+        symbol: Symbole spécifique à filtrer (optionnel)
+    
+    Returns:
+        DataFrame avec colonnes ['open', 'high', 'low', 'close', 'volume']
+        
+    Format CSV attendu:
+        Symbol,Date,Open,High,Low,Close,Volume
+        AAPL,2020-01-02,71.55,72.6,71.29,72.54,135480400
+        ...
+    """
+    try:
+        # Charger le CSV
+        print(f"📁 Chargement des données depuis: {csv_path}")
+        data = pd.read_csv(csv_path)
+        
+        # Vérifier les colonnes requises
+        required_columns = ['Symbol', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume']
+        missing_columns = [col for col in required_columns if col not in data.columns]
+        
+        if missing_columns:
+            raise ValueError(f"Colonnes manquantes dans le CSV: {missing_columns}")
+        
+        # Filtrer par symbole si spécifié
+        if symbol:
+            symbol = symbol.upper()
+            if symbol not in data['Symbol'].values:
+                available_symbols = sorted(data['Symbol'].unique())
+                raise ValueError(f"Symbole '{symbol}' non trouvé. Symboles disponibles: {available_symbols}")
+            
+            data = data[data['Symbol'] == symbol].copy()
+            print(f"🎯 Filtrage sur le symbole: {symbol}")
+        
+        # Convertir la date
+        data['Date'] = pd.to_datetime(data['Date'])
+        
+        # Trier par date
+        data = data.sort_values('Date').reset_index(drop=True)
+        
+        # Renommer les colonnes pour correspondre au format attendu
+        data = data.rename(columns={
+            'Open': 'open',
+            'High': 'high', 
+            'Low': 'low',
+            'Close': 'close',
+            'Volume': 'volume'
+        })
+        
+        # Sélectionner seulement les colonnes nécessaires
+        result_data = data[['open', 'high', 'low', 'close', 'volume']].copy()
+        
+        # Informations sur les données chargées
+        if symbol:
+            print(f"✅ Données chargées pour {symbol}:")
+        else:
+            symbols = sorted(data['Symbol'].unique()) if 'Symbol' in data.columns else ['Multiple']
+            print(f"✅ Données chargées pour {len(symbols)} symbole(s): {', '.join(symbols[:5])}")
+            if len(symbols) > 5:
+                print(f"    ... et {len(symbols)-5} autres symboles")
+        
+        print(f"📊 Période: du {data['Date'].min().strftime('%Y-%m-%d')} au {data['Date'].max().strftime('%Y-%m-%d')}")
+        print(f"📈 Nombre de lignes: {len(result_data):,}")
+        print(f"💰 Prix moyen: ${result_data['close'].mean():.2f}")
+        
+        return result_data
+        
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Fichier CSV non trouvé: {csv_path}")
+    except Exception as e:
+        raise Exception(f"Erreur lors du chargement du CSV: {str(e)}")
+
+
+def get_available_symbols(csv_path: str) -> List[str]:
+    """
+    Obtenir la liste des symboles disponibles dans le CSV.
+    
+    Args:
+        csv_path: Chemin vers le fichier CSV
+    
+    Returns:
+        Liste des symboles disponibles
+    """
+    try:
+        data = pd.read_csv(csv_path)
+        if 'Symbol' not in data.columns:
+            raise ValueError("Colonne 'Symbol' non trouvée dans le CSV")
+        
+        symbols = sorted(data['Symbol'].unique())
+        return symbols
+    except Exception as e:
+        raise Exception(f"Erreur lors de la lecture des symboles: {str(e)}")
+
+
+# 7. EXEMPLE D'UTILISATION
 
 if __name__ == "__main__":
-    # data yahoo finance 
-    data = yf.download('AAPL', start='2020-01-01', end='2023-12-31')
-    data = data[['Open', 'High', 'Low', 'Close', 'Volume']]
-    data.columns = ['open', 'high', 'low', 'close', 'volume']
+    csv_path = "../datatset/top10_stocks_2025_clean_international.csv"
+    
+    # Vérifier que le fichier existe
+    if not os.path.exists(csv_path):
+        print(f"Fichier CSV non trouvé: {csv_path}")
+        print("Assurez-vous que le chemin est correct et que le fichier existe.")
+        exit(1)
+    
+    print("Démarrage de l'environnement de trading avec données CSV\n")
+    
+    # Afficher les symboles disponibles
+    try:
+        available_symbols = get_available_symbols(csv_path)
+        print(f"📋 Symboles disponibles ({len(available_symbols)}): {', '.join(available_symbols)}\n")
+    except Exception as e:
+        print(f"❌ Erreur lors de la lecture des symboles: {e}")
+        exit(1)
+    
+    # Charger les données pour un symbole spécifique (AAPL par exemple)
+    try:
+        symbol = "AAPL"  # Vous pouvez changer ce symbole
+        print(f"🎯 Chargement des données pour {symbol}...")
+        data = load_stock_data_from_csv(csv_path, symbol=symbol)
+        print(f"✅ Données chargées avec succès!\n")
+        
+    except Exception as e:
+        print(f"❌ Erreur lors du chargement des données: {e}")
+        exit(1)
     
     # Configuration personnalisée
     config = TradingConfig(
         initial_balance=10_000,
         transaction_fee=0.001,
         reward_type="profit",
-        include_technical_indicators=True
+        include_technical_indicators=True,
+        lookback_window=60
     )
     
     # Créer l'environnement
+    print("🔧 Création de l'environnement de trading...")
     env = TradingEnv(data=data, config=config)
+    print(f"✅ Environnement créé avec succès!\n")
     
-    # Tester avec des actions aléatoires
-    print("Test de l'environnement avec des actions aléatoires\n")
+    # Informations sur l'environnement
+    print("📊 INFORMATIONS SUR L'ENVIRONNEMENT")
+    print("=" * 50)
+    print(f"🎯 Symbole:                {symbol}")
+    print(f"💰 Balance initiale:       ${config.initial_balance:,}")
+    print(f"💸 Frais de transaction:   {config.transaction_fee*100:.1f}%")
+    print(f"🎁 Type de récompense:     {config.reward_type}")
+    print(f"📏 Taille observation:     {env.observation_space.shape[0]}")
+    print(f"🎮 Actions possibles:      {env.action_space.n} (Hold, Buy, Sell, Short)")
+    print(f"📈 Données disponibles:    {len(data)} jours")
+    print(f"📅 Période:                {data.index[0]} à {data.index[-1]}")
+    print("=" * 50)
+    print()
+    
+    # Test de l'environnement avec des actions aléatoires
+    print("🎮 TEST AVEC ACTIONS ALÉATOIRES")
+    print("=" * 50)
     
     obs = env.reset()
-    print(f"✓ Observation shape: {obs.shape}")
-    print(f"✓ Action space: {env.action_space}")
-    print(f"✓ Observation space: {env.observation_space}\n")
+    print(f"✅ Environnement réinitialisé")
+    print(f"🔍 Shape de l'observation: {obs.shape}")
+    print(f"🎯 Espace d'actions: {env.action_space}")
+    print(f"🌐 Espace d'observations: {env.observation_space}")
+    print()
     
     # Simuler quelques étapes
-    for step in range(10):
+    action_names = ['HOLD', 'BUY', 'SELL', 'SHORT']
+    total_reward = 0
+    
+    print("🚀 Simulation de 20 étapes...")
+    print("-" * 80)
+    print(f"{'Step':<6} {'Action':<6} {'Prix':<8} {'Reward':<12} {'Net Worth':<12} {'Cash':<10} {'Shares':<8}")
+    print("-" * 80)
+    
+    for step in range(20):
         action = env.action_space.sample()  # Action aléatoire
         obs, reward, done, info = env.step(action)
+        total_reward += reward
         
-        action_names = ['HOLD', 'BUY', 'SELL', 'SHORT']
-        print(f"Step {step}: Action={action_names[action]}, Reward={reward:.6f}, Net Worth=${info['net_worth']:.2f}")
+        current_price = data.iloc[env.current_step-1]["close"]
+        
+        print(f"{step+1:<6} {action_names[action]:<6} ${current_price:<7.2f} "
+              f"{reward:<11.6f} ${info['net_worth']:<11.2f} "
+              f"${info['cash']:<9.2f} {info['shares']:<7.2f}")
         
         if done:
+            print(f"\n🏁 Episode terminé à l'étape {step+1}")
             break
     
-    print(f"\n✓ Environnement fonctionnel!")
-    print(f"✓ Historique des trades: {len(env.get_portfolio_history())} transactions")
+    print("-" * 80)
+    print(f"💰 Récompense totale: {total_reward:.6f}")
+    print(f"📊 Performance finale:")
+    
+    # Afficher l'état final
+    env.render()
+    
+    # Historique des trades
+    trades = env.get_portfolio_history()
+    print(f"📈 Nombre de transactions: {len(trades)}")
+    
+    if trades:
+        print("\n🔄 DERNIÈRES TRANSACTIONS:")
+        print("-" * 60)
+        for i, trade in enumerate(trades[-5:], 1):  # 5 dernières transactions
+            if trade['success']:
+                action_type = trade['type']
+                if action_type in ['BUY', 'SELL']:
+                    shares = trade.get('shares', 0)
+                    price = trade.get('price', 0)
+                    print(f"  {i}. {action_type}: {shares:.2f} actions @ ${price:.2f}")
+        print("-" * 60)
+    
+    print(f"\n✅ Test terminé avec succès!")
+    print(f"💡 L'environnement est prêt pour l'entraînement d'agents RL!")
+    
+    print(f"\n\nEXEMPLE AVEC TOUS LES SYMBOLES")
+    print("=" * 50)
+    print("💡 Pour charger toutes les données (tous symboles):")
+    print("   data = load_stock_data_from_csv(csv_path)  # Sans paramètre symbol")
+    print("⚠️  Attention: cela chargera toutes les données de tous les symboles")
+    print("   et l'environnement utilisera une séquence continue de tous les prix.")
+    print("=" * 50)
