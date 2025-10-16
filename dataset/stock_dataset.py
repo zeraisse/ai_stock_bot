@@ -70,7 +70,7 @@ def download_stock_data():
     
     return combined_df
 
-def save_to_csv(df, filename="top10_stocks_2025_clean.csv"):
+def save_to_csv(df, filename="top10_stocks_2025.csv"):
     """
     Sauvegarde le DataFrame dans un fichier CSV compatible Excel
     """
