@@ -24,7 +24,6 @@ trading_env.cpython-311.pyc
 *.temp
 
 # Dossiers de modèles
-models/
 DQN/models/
 
 # Fichiers système

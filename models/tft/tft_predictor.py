@@ -146,6 +146,9 @@ class TFTPredictor(BasePredictor):
             df_prepared,
             training=True
         )
+
+        # save le dataframe source pour la validation et les predictions
+        self.source_dataframe = df_prepared
         
         print(f"Dataset TFT cree avec {len(self.training_dataset)} sequences")
         
@@ -191,6 +194,9 @@ class TFTPredictor(BasePredictor):
         if self.training_dataset is None:
             raise ValueError("Je dois d'abord appeler prepare_data() avant train()")
         
+        # vérification que je possède bien le dataframe source
+        if not hasattr(self, 'source_dataframe'):
+            raise ValueError("Le dataframe source n'est pas disponible.")
         # Je cree les DataLoaders pour l'entrainement et la validation
         # Je split le dataset en train (80%) et val (20%)
         train_size = int(0.8 * len(self.training_dataset))
@@ -201,7 +207,7 @@ class TFTPredictor(BasePredictor):
         # Je cree le validation dataset
         validation_dataset = TimeSeriesDataSet.from_dataset(
             self.training_dataset,
-            self.training_dataset.data,
+            self.source_dataframe,
             predict=True,
             stop_randomization=True
         )
@@ -229,7 +235,7 @@ class TFTPredictor(BasePredictor):
         # Je cree le trainer PyTorch Lightning
         trainer_wrapper = TFTTrainer(
             max_epochs=epochs,
-            gpus=1 if torch.cuda.is_available() else 0
+            accelerator='auto',
         )
         
         checkpoint_path = "saved_models/tft_checkpoints"
