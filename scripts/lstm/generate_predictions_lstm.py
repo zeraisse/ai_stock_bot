@@ -6,6 +6,8 @@ Usage:
 """
 
 import sys
+
+from models.lstm.lstm_predictor import LSTMPredictor
 sys.path.append('..')
 
 import argparse
@@ -14,7 +16,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from ai_stock_bot.models.base import LSTMPredictor
 from env_trading.trading_env import load_stock_data_from_csv, TradingEnv, TradingConfig
 
 
