@@ -14,7 +14,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from models import LSTMPredictor
+from ai_stock_bot.models.base import LSTMPredictor
 from env_trading.trading_env import load_stock_data_from_csv, TradingEnv, TradingConfig
 
 
