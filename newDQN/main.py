@@ -3,35 +3,28 @@ import argparse
 import numpy as np 
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-
 import TradingEnv as te
 import DQNAgent as dqn
 
 try:
-    # PyTorch PPO agent (preferred)
     from PPOAgentPT import train_ppo_with_env
 except Exception:
     train_ppo_with_env = None
 
 try:
-    # NEAT training entry (optional)
     from neat_train import run_neat
 except Exception:
     run_neat = None
 
 
 def resolve_csv_path(path: str) -> str:
-    # Absolute path
     if os.path.isabs(path) and os.path.exists(path):
         return path
     candidates = []
-    # Relative to current working directory
     candidates.append(os.path.abspath(path))
-    # Relative to project root (parent of this file's dir)
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     norm_rel = path.lstrip('./\\')
     candidates.append(os.path.join(project_root, norm_rel))
-    # Common default within project
     candidates.append(os.path.join(project_root, 'dataset', 'top10_stocks_2025.csv'))
     for c in candidates:
         if os.path.exists(c):
