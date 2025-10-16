@@ -18,11 +18,14 @@ agent = dqn.DQNAgent(state_size=3, action_size=3)
 
 for episode in range(10):
     state = env.reset()
+    state = np.array(state[0])
     state = np.reshape(state, [1, 3])
     total_reward = 0
     for time in range(len(prices)-1):
         action = agent.act(state)
-        next_state, reward, done, _ = env.step(action)
+        next_state, reward, terminated, truncated, _ = env.step(action)
+        done = terminated or truncated
+
         total_reward += reward
         next_state = np.reshape(next_state, [1, 3])
         agent.remember(state, action, reward, next_state, done)
