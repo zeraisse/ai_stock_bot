@@ -6,9 +6,9 @@ import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
 
-os.makedirs('models', exist_ok=True)
+os.makedirs('./models', exist_ok=True)
 
-data = pd.read_csv('dataset/top10_stocks_2025.csv')
+data = pd.read_csv('../dataset/top10_stocks_2025.csv')
 prices = data['Close'].values.reshape(-1, 1)
 
 scaler = MinMaxScaler()
