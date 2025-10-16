@@ -40,3 +40,19 @@ Thumbs.db
 # Données sensibles
 *.env
 .env
+env/
+ENV/
+
+# Models & Data
+saved_models/
+*.pth
+*.npy
+*.pkl
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

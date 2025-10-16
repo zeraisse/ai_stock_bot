@@ -800,12 +800,32 @@ if __name__ == "__main__":
     print(" Création de l'environnement historique...")
     env_hist = TradingEnv(data=data, config=config)
     print(f"✅ Environnement créé avec succès!\n")
+    # Créer l'environnement
+    print("🔧 Création de l'environnement de trading...")
+    env = TradingEnv(data=data, config=config)
+    print(f"Environnement créé avec succès!\n")
     
     # Test historique (simplifié)
     obs = env_hist.reset()
     print(f"Test historique démarré. Observation initiale: {obs.shape}")
     
     print("\n TEST EN MODE LIVE AVEC WEBSOCKET (AAPL)")
+    # Informations sur l'environnement
+    print("📊 INFORMATIONS SUR L'ENVIRONNEMENT")
+    print("=" * 50)
+    print(f"Symbole:                {symbol}")
+    print(f"Balance initiale:       ${config.initial_balance:,}")
+    print(f"Frais de transaction:   {config.transaction_fee*100:.1f}%")
+    print(f"Type de récompense:     {config.reward_type}")
+    print(f"Taille observation:     {env.observation_space.shape[0]}")
+    print(f"Actions possibles:      {env.action_space.n} (Hold, Buy, Sell, Short)")
+    print(f"Données disponibles:    {len(data)} jours")
+    print(f"Période:                {data.index[0]} à {data.index[-1]}")
+    print("=" * 50)
+    print()
+    
+    # Test de l'environnement avec des actions aléatoires
+    print("TEST AVEC ACTIONS ALÉATOIRES")
     print("=" * 50)
     
     env_live = TradingEnv(config=config, live=True, symbol="AAPL")
