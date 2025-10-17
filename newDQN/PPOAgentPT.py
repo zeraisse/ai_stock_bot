@@ -15,10 +15,12 @@ import torch.optim as optim
 from torch.distributions import Categorical
 
 
+# Utilitaire: conversion numpy -> tensor float32 sur le bon device
 def to_tensor(x: np.ndarray, device: torch.device) -> torch.Tensor:
     return torch.as_tensor(x, dtype=torch.float32, device=device)
 
 
+# Sommes cumulées actualisées (sert à GAE et retours)
 def discount_cumsum(x: np.ndarray, discount: float) -> np.ndarray:
     return np.array([
         sum(discount ** i * x[idx + i] for i in range(len(x) - idx))
@@ -27,6 +29,10 @@ def discount_cumsum(x: np.ndarray, discount: float) -> np.ndarray:
 
 
 class ActorCritic(nn.Module):
+    # Réseau acteur‑critique:
+    #  - tronc MLP (64 -> 64) avec Tanh
+    #  - tête politique: logits sur actions discrètes
+    #  - tête valeur: estimation scalaire V(s)
     def __init__(self, obs_dim: int, act_dim: int):
         super().__init__()
         self.net = nn.Sequential(
@@ -46,6 +52,7 @@ class ActorCritic(nn.Module):
 
 
 class Callback:
+    # Interface minimale pour greffer des hooks d'entraînement
     def on_train_begin(self, agent, info: dict):
         pass
     def on_epoch_end(self, agent, epoch: int, logs: dict):
@@ -55,6 +62,7 @@ class Callback:
 
 
 class EarlyStopping(Callback):
+    # Stoppe l'entraînement si la métrique monitorée n'améliore plus (patience)
     def __init__(self, monitor: str = 'mean_return', patience: int = 20, mode: str = 'max'):
         self.monitor = monitor
         self.patience = int(patience)
@@ -79,6 +87,7 @@ class EarlyStopping(Callback):
 
 
 class BestModelSaver(Callback):
+    # Sauvegarde le meilleur modèle selon la métrique monitorée
     def __init__(self, path: str = './models/ppo_best.pt', monitor: str = 'mean_return', mode: str = 'max'):
         self.path = path
         self.monitor = monitor
@@ -99,6 +108,7 @@ class BestModelSaver(Callback):
 
 
 class PPOBuffer:
+    # Tampon pour stocker une trajectoire de steps_per_epoch et calculer avantages/retours
     def __init__(self, obs_dim: int, size: int, gamma: float = 0.99, lam: float = 0.95):
         self.obs_buf = np.zeros((size, obs_dim), dtype=np.float32)
         self.act_buf = np.zeros(size, dtype=np.int64)
@@ -119,6 +129,7 @@ class PPOBuffer:
         self.ptr += 1
 
     def finish_path(self, last_val: float = 0.0):
+        # Calcule GAE (avantages) et retours pour le segment courant
         path_slice = slice(self.path_start_idx, self.ptr)
         rews = np.append(self.rew_buf[path_slice], last_val)
         vals = np.append(self.val_buf[path_slice], last_val)
@@ -128,6 +139,7 @@ class PPOBuffer:
         self.path_start_idx = self.ptr
 
     def get(self) -> Dict[str, np.ndarray]:
+        # Normalise les avantages et retourne toutes les buffers (et reset les pointeurs)
         adv_mean, adv_std = np.mean(self.adv_buf), np.std(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / (adv_std + 1e-8)
         data = dict(obs=self.obs_buf, act=self.act_buf, ret=self.ret_buf, adv=self.adv_buf, logp=self.logp_buf)
@@ -136,6 +148,7 @@ class PPOBuffer:
 
 
 class PPOAgent:
+    # Agent PPO: collecte des données, calcule pertes PPO et met à jour en minibatches
     def __init__(self, env, clip_ratio: float = 0.2, pi_lr: float = 1e-4, vf_lr: float = 1e-3,
                  train_iters: int = 60, target_kl: float = 0.01, device: str | None = None,
                  minibatch_size: int = 256):
@@ -153,6 +166,7 @@ class PPOAgent:
         self.minibatch_size = int(minibatch_size)
 
     def _compute_loss(self, obs_t, act_t, adv_t, ret_t, logp_old_t):
+        # Objective PPO clippé + MSE valeur + bonus entropie; retourne aussi KL approx
         logits, value = self.ac(obs_t)
         dist = Categorical(logits=logits)
         logp = dist.log_prob(act_t)
@@ -166,6 +180,7 @@ class PPOAgent:
         return total_loss, pi_loss, v_loss, entropy, approx_kl
 
     def update(self, data):
+        # Updates en plusieurs époques d'update et en mini-lots mélangés
         obs = data['obs']
         acts = data['act']
         advs = data['adv']
@@ -215,6 +230,7 @@ class PPOAgent:
         return stats
 
     def select_action(self, obs: np.ndarray):
+        # Échantillonne une action et retourne aussi V(s) estimée et log-proba
         obs_t = to_tensor(obs[np.newaxis, ...], self.device)
         with torch.no_grad():
             logits, value = self.ac(obs_t)
@@ -224,6 +240,7 @@ class PPOAgent:
         return int(action.item()), float(value[0, 0].item()), float(logp[0].item())
 
     def train(self, epochs: int = 50, steps_per_epoch: int = 4000, model_dir: str = "./models", callbacks: list | None = None):
+        # Boucle principale: collecte -> GAE -> updates PPO -> logs/callbacks
         os.makedirs(model_dir, exist_ok=True)
         buffer = PPOBuffer(self.obs_dim, steps_per_epoch)
         returns = deque(maxlen=100)
