@@ -43,7 +43,7 @@ def load_prices(csv_path: str):
     return prices
 
 def save_models_dqn(episode, agent):
-      if (episode + 1) % 20 == 0:
+      if (episode + 1) % 100 == 0:
             backup_path = f"models/backup_models/dqn_trading_model_backup_ep{episode+1}.h5"
             agent.save(backup_path)
             print(f"Backup sauvegardé: {backup_path}")
@@ -78,7 +78,7 @@ def load_last_backup(agent, backup_dir="models/backup_models"):
 
 
 
-def run_dqn(env, prices, episodes: int = 1000):
+def run_dqn(env, prices, episodes: int = 1500):
     os.makedirs("models/backup_models", exist_ok=True)
     agent = dqn.DQNAgent(state_size=3, action_size=3)
     start_episode = load_last_backup(agent)
@@ -106,8 +106,9 @@ def run_dqn(env, prices, episodes: int = 1000):
         rewards.append(total_reward)
         print(f"Episode: {episode+1}/{episodes}, Total Reward: {total_reward}")
 
-        if len(agent.memory) > 64:
-            agent.replay(64)
+        if len(agent.memory) > 128:
+            agent.replay(128)
+            
 
         save_models_dqn(episode, agent)
 

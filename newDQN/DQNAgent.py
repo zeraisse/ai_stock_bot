@@ -4,24 +4,25 @@ import torch.optim as optim
 import random
 import numpy as np
 from collections import deque
-import DQNLSTMModel as model
+import DQNModel as model
+# import DQNLSTMModel as model
 
 
 class DQNAgent:
     def __init__(self, state_size, action_size):
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = deque(maxlen=5000)
+        self.memory = deque(maxlen=10000)
         self.gamma = 0.99
         self.epsilon = 1.0
         self.epsilon_min = 0.05
         self.epsilon_decay = 0.999
-        self.learning_rate = 0.0005
+        self.learning_rate = 0.0001
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        #self.model = model.DQNModel(state_size, action_size).to(self.device)
-        self.model = model.DQNLSTMModel(state_size, action_size).to(self.device)
+        self.model = model.DQNModel(state_size, action_size).to(self.device)
+        #self.model = model.DQNLSTMModel(state_size, action_size).to(self.device)
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
         self.loss_fn = nn.MSELoss()
@@ -58,6 +59,8 @@ class DQNAgent:
             self.optimizer.zero_grad()
             loss = self.loss_fn(q_values, target_f)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+
             self.optimizer.step()
 
         if self.epsilon > self.epsilon_min:
