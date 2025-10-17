@@ -4,9 +4,8 @@ import torch.optim as optim
 import random
 import numpy as np
 from collections import deque
-import DQNModel as model
-# import DQNLSTMModel as model
-
+import DQNLSTMModel as model
+import DQNTFTModel as tft_model
 
 class DQNAgent:
     def __init__(self, state_size, action_size):
@@ -18,11 +17,15 @@ class DQNAgent:
         self.epsilon_min = 0.05
         self.epsilon_decay = 0.999
         self.learning_rate = 0.0001
+        self.learning_rate = 0.0005  # adam % apprentissage
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.model = model.DQNModel(state_size, action_size).to(self.device)
         #self.model = model.DQNLSTMModel(state_size, action_size).to(self.device)
+        #self.model = model.DQNModel(state_size, action_size).to(self.device)
+        self.model = model.DQNLSTMModel(state_size, action_size).to(self.device)
+        self.model = tft_model.DQNTFTModel(state_size, action_size).to(self.device) # ici CHAMPION j'utilie le TFT models
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
         self.loss_fn = nn.MSELoss()

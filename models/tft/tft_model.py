@@ -203,7 +203,7 @@ class TFTTrainer:
     
     def __init__(self, 
                  max_epochs: int = 50,
-                 gpus: int = 1 if torch.cuda.is_available() else 0,
+                 accelerator: str = 'auto',
                  gradient_clip_val: float = 0.1):
         """
         J'initialise le trainer PyTorch Lightning.
@@ -214,11 +214,15 @@ class TFTTrainer:
             gradient_clip_val: Valeur de clipping pour les gradients
         """
         self.max_epochs = max_epochs
-        self.gpus = gpus
+        self.accelerator = accelerator
         self.gradient_clip_val = gradient_clip_val
         
-        device = "GPU" if gpus > 0 else "CPU"
-        print(f"Trainer initialise pour {max_epochs} epochs sur {device}")
+        # je determine le device automatiquement 
+        if accelerator == 'auto':
+            self.accelerator = 'gpu' if torch.cuda.is_available() else 'cpu'
+
+        print(f"Trainer initialise pour {max_epochs} epochs sur {self.accelerator.upper()}")
+
     
     def create_trainer(self, checkpoint_path: Optional[str] = None) -> pl.Trainer:
         """
@@ -257,7 +261,8 @@ class TFTTrainer:
         # Je cree le trainer
         trainer = pl.Trainer(
             max_epochs=self.max_epochs,
-            gpus=self.gpus,
+            accelerator=self.accelerator,
+            devices=1, 
             gradient_clip_val=self.gradient_clip_val,
             callbacks=callbacks,
             enable_progress_bar=True,
