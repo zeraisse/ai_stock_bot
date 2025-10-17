@@ -14,11 +14,5 @@ Utilisation:
 """
 
 from .tft_predictor import TFTPredictor
-from .tft_model import TFTModel
 
-__all__ = [
-    'TFTPredictor',
-    'TFTModel'
-]
-
-__version__ = '1.0.0'
+__all__ = ['TFTPredictor']

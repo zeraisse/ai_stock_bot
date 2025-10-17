@@ -4,6 +4,7 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from models.lstm.lstm_predictor import LSTMPredictor
+from models.tft.tft_predictor import TFTPredictor
 
 class DQNLSTMModel(nn.Module):
     def __init__(self, state_size, action_size, sequence_length=60):
