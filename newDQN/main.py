@@ -5,6 +5,8 @@ import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 import TradingEnv as te
 import DQNAgent as dqn
+import glob
+import matplotlib.pyplot as plt
 
 try:
     from PPOAgentPT import train_ppo_with_env
@@ -40,14 +42,55 @@ def load_prices(csv_path: str):
     prices = scaler.fit_transform(prices).flatten()
     return prices
 
+def save_models_dqn(episode, agent):
+      if (episode + 1) % 20 == 0:
+            backup_path = f"models/backup_models/dqn_trading_model_backup_ep{episode+1}.h5"
+            agent.save(backup_path)
+            print(f"Backup sauvegardé: {backup_path}")
 
-def run_dqn(env, prices, episodes: int = 10):
+
+
+
+def load_last_backup(agent, backup_dir="models/backup_models"):
+    """
+    Charge le dernier backup disponible pour l'agent DQN.
+    
+    Args:
+        agent (DQNAgent): l'agent DQN
+        backup_dir (str): dossier où sont stockés les backups
+    
+    Returns:
+        episode_start (int): l'épisode à partir duquel continuer
+    """
+    backup_files = sorted(
+        glob.glob(os.path.join(backup_dir, "dqn_trading_model_backup_ep*.h5")),
+        key=os.path.getmtime
+    )
+    if backup_files:
+        last_backup = backup_files[-1]
+        agent.load(last_backup)
+        episode_start = int(last_backup.split("_ep")[-1].split(".")[0])
+        print(f"Dernier backup chargé : {last_backup}, reprise depuis épisode {episode_start + 1}")
+        return episode_start + 1
+    else:
+        print("Aucun backup trouvé, début de l'entraînement depuis l'épisode 1")
+        return 0
+
+
+
+def run_dqn(env, prices, episodes: int = 1000):
+    os.makedirs("models/backup_models", exist_ok=True)
     agent = dqn.DQNAgent(state_size=3, action_size=3)
-    for episode in range(episodes):
+    start_episode = load_last_backup(agent)
+    
+    rewards = []
+
+    for episode in range(start_episode, episodes):
         state = env.reset()
         state = np.array(state[0])
         state = np.reshape(state, [1, 3])
         total_reward = 0
+
         for _ in range(len(prices) - 1):
             action = agent.act(state)
             next_state, reward, terminated, truncated, _ = env.step(action)
@@ -56,12 +99,30 @@ def run_dqn(env, prices, episodes: int = 10):
             next_state = np.reshape(next_state, [1, 3])
             agent.remember(state, action, reward, next_state, done)
             state = next_state
+
             if done:
-                print(f"Episode: {episode+1}/{episodes}, Total Reward: {total_reward}")
                 break
-        if len(agent.memory) > 32:
-            agent.replay(32)
-    agent.save("models/dqn_trading_model.h5")
+
+        rewards.append(total_reward)
+        print(f"Episode: {episode+1}/{episodes}, Total Reward: {total_reward}")
+
+        if len(agent.memory) > 64:
+            agent.replay(64)
+
+        save_models_dqn(episode, agent)
+
+    agent.save("models/backup_models/dqn_trading_model_final.h5")
+    display_rewards(rewards)
+
+
+def display_rewards(rewards):
+    plt.figure(figsize=(10,5))
+    plt.plot(rewards)
+    plt.title("Évolution du Total Reward pendant l'apprentissage")
+    plt.xlabel("Épisodes")
+    plt.ylabel("Total Reward")
+    plt.grid(True)
+    plt.savefig("models/reward_plot.png")
 
 
 def run_ppo(env):
