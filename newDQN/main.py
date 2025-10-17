@@ -3,6 +3,7 @@ import argparse
 import numpy as np 
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
+import matplotlib.pyplot as plt
 
 import TradingEnv as te
 import DQNAgent as dqn
@@ -71,23 +72,58 @@ def run_dqn(env, prices, episodes: int = 10):
     agent.save("models/dqn_trading_model.h5")
 
 
-def run_ppo(env):
+def run_ppo(env, epochs: int = 200, steps_per_epoch: int = 2000):
     if train_ppo_with_env is None:
         raise RuntimeError("PyTorch PPO not available. Ensure PPOAgentPT.py is present and importable.")
-    train_ppo_with_env(env, epochs=10, steps_per_epoch=2000)
+    agent, history = train_ppo_with_env(env, epochs=epochs, steps_per_epoch=steps_per_epoch)
+    # Plot PPO training history
+    try:
+        plt.figure(figsize=(8, 4))
+        plt.plot(history, label='Mean episode return per epoch')
+        plt.xlabel('Epoch')
+        plt.ylabel('Return')
+        plt.title('PPO Training')
+        plt.legend()
+        os.makedirs('./models', exist_ok=True)
+        plt.tight_layout()
+        plt.savefig('./models/ppo_training.png')
+        plt.close()
+    except Exception:
+        pass
+    return agent, history
 
 
-def run_neat_cli():
+def run_neat_cli(generations: int = 20):
     if run_neat is None:
         raise RuntimeError("neat-python not available. Ensure neat_train.py and neat-python are installed.")
     config_path = os.path.join(os.path.dirname(__file__), 'neat-config.ini')
-    run_neat(config_path, generations=20)
+    winner, stats, fitness_history = run_neat(config_path, generations=generations)
+    # Plot NEAT best fitness per generation
+    try:
+        plt.figure(figsize=(8, 4))
+        plt.plot(fitness_history, label='Best fitness per generation')
+        plt.xlabel('Generation')
+        plt.ylabel('Fitness')
+        plt.title('NEAT Training')
+        plt.legend()
+        os.makedirs('./models', exist_ok=True)
+        plt.tight_layout()
+        plt.savefig('./models/neat_training.png')
+        plt.close()
+    except Exception:
+        pass
+    return winner, stats, fitness_history
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--algo', choices=['dqn', 'ppo', 'neat'], default='dqn')
     parser.add_argument('--csv', default='../dataset/top10_stocks_2025.csv')
+    # PPO controls
+    parser.add_argument('--ppo-epochs', type=int, default=200)
+    parser.add_argument('--ppo-steps', type=int, default=2000)
+    # NEAT controls
+    parser.add_argument('--neat-generations', type=int, default=50)
     args = parser.parse_args()
 
     os.makedirs('./models', exist_ok=True)
@@ -98,9 +134,9 @@ def main():
     if args.algo == 'dqn':
         run_dqn(env, prices)
     elif args.algo == 'ppo':
-        run_ppo(env)
+        run_ppo(env, epochs=args.ppo_epochs, steps_per_epoch=args.ppo_steps)
     else:
-        run_neat_cli()
+        run_neat_cli(generations=args.neat_generations)
 
 
 if __name__ == '__main__':

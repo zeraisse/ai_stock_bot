@@ -45,6 +45,59 @@ class ActorCritic(nn.Module):
         return logits, value
 
 
+class Callback:
+    def on_train_begin(self, agent, info: dict):
+        pass
+    def on_epoch_end(self, agent, epoch: int, logs: dict):
+        pass
+    def on_train_end(self, agent, history: list):
+        pass
+
+
+class EarlyStopping(Callback):
+    def __init__(self, monitor: str = 'mean_return', patience: int = 20, mode: str = 'max'):
+        self.monitor = monitor
+        self.patience = int(patience)
+        self.mode = mode
+        self.best = -np.inf if mode == 'max' else np.inf
+        self.wait = 0
+        self.stopped_epoch = None
+        self.should_stop = False
+    def on_epoch_end(self, agent, epoch: int, logs: dict):
+        val = logs.get(self.monitor)
+        if val is None:
+            return
+        improved = (val > self.best) if self.mode == 'max' else (val < self.best)
+        if improved:
+            self.best = val
+            self.wait = 0
+        else:
+            self.wait += 1
+            if self.wait >= self.patience:
+                self.should_stop = True
+                self.stopped_epoch = epoch
+
+
+class BestModelSaver(Callback):
+    def __init__(self, path: str = './models/ppo_best.pt', monitor: str = 'mean_return', mode: str = 'max'):
+        self.path = path
+        self.monitor = monitor
+        self.mode = mode
+        self.best = -np.inf if mode == 'max' else np.inf
+    def on_epoch_end(self, agent, epoch: int, logs: dict):
+        val = logs.get(self.monitor)
+        if val is None:
+            return
+        improved = (val > self.best) if self.mode == 'max' else (val < self.best)
+        if improved:
+            self.best = val
+            try:
+                os.makedirs(os.path.dirname(self.path) or '.', exist_ok=True)
+                torch.save(agent.ac.state_dict(), self.path)
+            except Exception:
+                pass
+
+
 class PPOBuffer:
     def __init__(self, obs_dim: int, size: int, gamma: float = 0.99, lam: float = 0.95):
         self.obs_buf = np.zeros((size, obs_dim), dtype=np.float32)
@@ -83,8 +136,9 @@ class PPOBuffer:
 
 
 class PPOAgent:
-    def __init__(self, env, clip_ratio: float = 0.2, pi_lr: float = 3e-4, vf_lr: float = 1e-3,
-                 train_iters: int = 80, target_kl: float = 0.01, device: str | None = None):
+    def __init__(self, env, clip_ratio: float = 0.2, pi_lr: float = 1e-4, vf_lr: float = 1e-3,
+                 train_iters: int = 60, target_kl: float = 0.01, device: str | None = None,
+                 minibatch_size: int = 256):
         self.env = env
         self.obs_dim = env.observation_space.shape[0]
         self.act_dim = env.action_space.n
@@ -95,6 +149,8 @@ class PPOAgent:
         self.target_kl = target_kl
         self.pi_opt = optim.Adam(self.ac.parameters(), lr=pi_lr)
         self.vf_opt = optim.Adam(self.ac.parameters(), lr=vf_lr)
+        # Interpret train_iters as number of update epochs when using minibatches
+        self.minibatch_size = int(minibatch_size)
 
     def _compute_loss(self, obs_t, act_t, adv_t, ret_t, logp_old_t):
         logits, value = self.ac(obs_t)
@@ -110,18 +166,53 @@ class PPOAgent:
         return total_loss, pi_loss, v_loss, entropy, approx_kl
 
     def update(self, data):
-        obs_t = to_tensor(data['obs'], self.device)
-        act_t = torch.as_tensor(data['act'], dtype=torch.long, device=self.device)
-        adv_t = to_tensor(data['adv'], self.device)
-        ret_t = to_tensor(data['ret'], self.device)
-        logp_old_t = to_tensor(data['logp'], self.device)
-        for _ in range(self.train_iters):
-            total_loss, pi_loss, v_loss, entropy, kl = self._compute_loss(obs_t, act_t, adv_t, ret_t, logp_old_t)
-            self.pi_opt.zero_grad(set_to_none=True)
-            total_loss.backward()
-            self.pi_opt.step()
-            if kl.item() > 1.5 * self.target_kl:
+        obs = data['obs']
+        acts = data['act']
+        advs = data['adv']
+        rets = data['ret']
+        logps = data['logp']
+        N = len(acts)
+        pi_losses = []
+        v_losses = []
+        entropies = []
+        kls = []
+        iters_done = 0
+        for _ in range(self.train_iters):  # treat as "update epochs"
+            idx = np.random.permutation(N)
+            for start in range(0, N, self.minibatch_size):
+                end = min(start + self.minibatch_size, N)
+                mb = idx[start:end]
+                obs_t = to_tensor(obs[mb], self.device)
+                act_t = torch.as_tensor(acts[mb], dtype=torch.long, device=self.device)
+                adv_t = to_tensor(advs[mb], self.device)
+                ret_t = to_tensor(rets[mb], self.device)
+                logp_old_t = to_tensor(logps[mb], self.device)
+                total_loss, pi_loss, v_loss, entropy, kl = self._compute_loss(obs_t, act_t, adv_t, ret_t, logp_old_t)
+                self.pi_opt.zero_grad(set_to_none=True)
+                total_loss.backward()
+                try:
+                    torch.nn.utils.clip_grad_norm_(self.ac.parameters(), max_norm=0.5)
+                except Exception:
+                    pass
+                self.pi_opt.step()
+                pi_losses.append(float(pi_loss.item()))
+                v_losses.append(float(v_loss.item()))
+                entropies.append(float(entropy.item()))
+                kls.append(float(kl.item()))
+                iters_done += 1
+                if kl.item() > 1.5 * self.target_kl:
+                    break
+            if len(kls) and kls[-1] > 1.5 * self.target_kl:
                 break
+        # return summary stats for logging
+        stats = {
+            'pi_loss': float(np.mean(pi_losses)) if len(pi_losses) else 0.0,
+            'v_loss': float(np.mean(v_losses)) if len(v_losses) else 0.0,
+            'entropy': float(np.mean(entropies)) if len(entropies) else 0.0,
+            'kl': float(np.mean(kls)) if len(kls) else 0.0,
+            'iters': iters_done,
+        }
+        return stats
 
     def select_action(self, obs: np.ndarray):
         obs_t = to_tensor(obs[np.newaxis, ...], self.device)
@@ -132,14 +223,22 @@ class PPOAgent:
             logp = dist.log_prob(action)
         return int(action.item()), float(value[0, 0].item()), float(logp[0].item())
 
-    def train(self, epochs: int = 50, steps_per_epoch: int = 4000, model_dir: str = "./models"):
+    def train(self, epochs: int = 50, steps_per_epoch: int = 4000, model_dir: str = "./models", callbacks: list | None = None):
         os.makedirs(model_dir, exist_ok=True)
         buffer = PPOBuffer(self.obs_dim, steps_per_epoch)
         returns = deque(maxlen=100)
-        for _ in range(epochs):
+        training_history = []  # mean episode return per epoch
+        cbs = callbacks or []
+        try:
+            for cb in cbs:
+                cb.on_train_begin(self, {'epochs': epochs, 'steps_per_epoch': steps_per_epoch})
+        except Exception:
+            pass
+        for epoch in range(epochs):
             reset_out = self.env.reset()
             obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
             ep_ret = 0.0
+            ep_returns_epoch = []
             for t in range(steps_per_epoch):
                 act, val, logp = self.select_action(obs)
                 step_out = self.env.step(act)
@@ -156,21 +255,55 @@ class PPOAgent:
                         last_val = 0.0 if done else float(self.ac(to_tensor(obs[np.newaxis, ...], self.device))[1][0, 0].item())
                     buffer.finish_path(last_val)
                     returns.append(ep_ret)
+                    ep_returns_epoch.append(float(ep_ret))
                     reset_out = self.env.reset()
                     obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
                     ep_ret = 0.0
             data = buffer.get()
-            self.update(data)
+            upd_stats = self.update(data)
+            # record epoch mean return (0 if no full episode finished)
+            epoch_mean = float(np.mean(ep_returns_epoch)) if len(ep_returns_epoch) > 0 else 0.0
+            training_history.append(epoch_mean)
+            logs = {
+                'mean_return': epoch_mean,
+                **upd_stats,
+            }
+            try:
+                for cb in cbs:
+                    cb.on_epoch_end(self, epoch, logs)
+            except Exception:
+                pass
+            try:
+                print(
+                    f"[PPO] Epoch {epoch + 1}/{epochs} | mean_return={epoch_mean:.3f} | "
+                    f"pi_loss={upd_stats['pi_loss']:.4f} v_loss={upd_stats['v_loss']:.4f} "
+                    f"entropy={upd_stats['entropy']:.4f} kl={upd_stats['kl']:.5f} "
+                    f"iters={upd_stats['iters']} | steps={steps_per_epoch}"
+                )
+            except Exception:
+                pass
+            try:
+                for cb in cbs:
+                    if isinstance(cb, EarlyStopping) and cb.should_stop:
+                        raise StopIteration
+            except StopIteration:
+                break
         # Optionnel: sauvegarde
         try:
             torch.save(self.ac.state_dict(), os.path.join(model_dir, 'ppo_pt_actor_critic.pt'))
         except Exception:
             pass
+        try:
+            for cb in cbs:
+                cb.on_train_end(self, training_history)
+        except Exception:
+            pass
+        return training_history
 
 
 def train_ppo_with_env(env, epochs: int = 50, steps_per_epoch: int = 4000):
     agent = PPOAgent(env)
-    agent.train(epochs=epochs, steps_per_epoch=steps_per_epoch)
-    return agent
+    history = agent.train(epochs=epochs, steps_per_epoch=steps_per_epoch)
+    return agent, history
 
 

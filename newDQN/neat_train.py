@@ -1,8 +1,9 @@
 import os
 import pickle
-from typing import Tuple
+from typing import Tuple, List, Callable, Any
 
 import neat
+import neat.reporting as reporting
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
@@ -44,7 +45,11 @@ def eval_genomes(genomes, config):
         genome.fitness = eval_genome(genome, config)
 
 
-def run_neat(config_file: str, generations: int = 30) -> Tuple[object, neat.StatisticsReporter]:
+def run_neat(
+    config_file: str,
+    generations: int = 500,
+    reporters: List[Any] | None = None,
+) -> Tuple[object, neat.StatisticsReporter, list]:
     config = neat.Config(
         neat.DefaultGenome,
         neat.DefaultReproduction,
@@ -57,6 +62,47 @@ def run_neat(config_file: str, generations: int = 30) -> Tuple[object, neat.Stat
     pop.add_reporter(neat.StdOutReporter(True))
     stats = neat.StatisticsReporter()
     pop.add_reporter(stats)
+    
+    class SimpleLogger(reporting.BaseReporter):
+        def start_generation(self, generation):
+            try:
+                print(f"[NEAT] Generation {generation}", flush=True)
+            except Exception:
+                pass
+        def post_evaluate(self, config, population, species, best_genome):
+            try:
+                best_fit = getattr(best_genome, 'fitness', None)
+                if best_fit is not None:
+                    print(f"[NEAT] Best fitness: {best_fit:.3f}", flush=True)
+            except Exception:
+                pass
+
+    pop.add_reporter(SimpleLogger())
+
+    # Attach custom reporters if provided
+    if reporters:
+        for rep in reporters:
+            try:
+                # If user provided a callable object with hooks, adapt it
+                if not hasattr(rep, 'start_generation') and callable(rep):
+                    class _Wrapper(reporting.BaseReporter):
+                        def __init__(self, fn: Callable):
+                            self.fn = fn
+                        def start_generation(self, generation):
+                            try:
+                                self.fn('start_generation', generation)
+                            except Exception:
+                                pass
+                        def post_evaluate(self, config, population, species, best_genome):
+                            try:
+                                self.fn('post_evaluate', best_genome)
+                            except Exception:
+                                pass
+                    pop.add_reporter(_Wrapper(rep))
+                else:
+                    pop.add_reporter(rep)
+            except Exception:
+                pass
 
     winner = pop.run(eval_genomes, n=generations)
 
@@ -64,14 +110,19 @@ def run_neat(config_file: str, generations: int = 30) -> Tuple[object, neat.Stat
     with open('./models/best_genome.pkl', 'wb') as f:
         pickle.dump(winner, f)
 
-    return winner, stats
+    # Build per-generation best fitness history
+    try:
+        fitness_history = [float(g.fitness) for g in getattr(stats, 'most_fit_genomes', [])]
+    except Exception:
+        fitness_history = []
+    return winner, stats, fitness_history
 
 
 if __name__ == '__main__':
     config_path = os.path.join(os.path.dirname(__file__), 'neat-config.ini')
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"NEAT config not found at {config_path}")
-    winner_genome, stats_reporter = run_neat(config_path, generations=30)
+    winner_genome, stats_reporter, fitness_history = run_neat(config_path, generations=30)
     print("NEAT training done.")
 
 
