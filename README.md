@@ -1,5 +1,9 @@
 # AI Stock Bot
 
 ## Description
+Ce projet est une application d'analyse boursière alimentée par l'intelligence artificielle. Elle permet de visualiser et d'analyser des données financières de manière interactive.
 
-Projet d'intelligence artificielle pour le trading automatisé utilisant des données boursières historiques. Le projet comprend un environnement de trading compatible Gym/Gymnasium pour l'entraînement d'agents d'apprentissage par renforcement, avec un agent DQN (Deep Q-Network) intégré et visualisation en temps réel.
+Pour accéder au projet en localhost, lancez la commande suivante :
+```bash
+streamlit run app.py
+```
