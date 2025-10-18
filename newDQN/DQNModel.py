@@ -22,6 +22,7 @@ class DQNModel(nn.Module):
             nn.ReLU(),
             nn.Linear(64, action_size)
         )
+        
 
 
     def forward(self, x):

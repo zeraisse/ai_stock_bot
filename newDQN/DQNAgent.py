@@ -21,9 +21,7 @@ class DQNAgent:
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.model = model.DQNModel(state_size, action_size).to(self.device)
-        #self.model = model.DQNLSTMModel(state_size, action_size).to(self.device)
-        #self.model = model.DQNModel(state_size, action_size).to(self.device)
+        # self.model = model.DQNModel(state_size, action_size).to(self.device)
         self.model = model.DQNLSTMModel(state_size, action_size).to(self.device)
         self.model = tft_model.DQNTFTModel(state_size, action_size).to(self.device) # ici CHAMPION j'utilie le TFT models
 
