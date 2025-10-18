@@ -80,7 +80,7 @@ def load_last_backup(agent, backup_dir="models/backup_models"):
 
 
 
-def run_dqn(env, prices, episodes: int = 1500):
+def run_dqn(env, prices, episodes: int = 100):
     os.makedirs("models/backup_models", exist_ok=True)
     agent = dqn.DQNAgent(state_size=3, action_size=3)
     start_episode = load_last_backup(agent)
